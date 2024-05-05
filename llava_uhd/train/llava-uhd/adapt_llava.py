@@ -312,7 +312,7 @@ class adapt_LlavaMetaForCausalLM(ABC):
 
 #_____MY_DEBUG____belong to llava_llama.py
 class LlavaConfig(LlamaConfig):
-    model_type = "llava"
+    model_type = "ui-llava"
 
 class adapt_LlavaLlamaModel(adapt_LlavaMetaModel, LlamaModel):
     config_class = LlavaConfig
@@ -394,5 +394,5 @@ class adapt_LlavaLlamaForCausalLM(LlamaForCausalLM, adapt_LlavaMetaForCausalLM):
             _inputs['images'] = images
         return _inputs
 
-AutoConfig.register("llava", LlavaConfig)
+AutoConfig.register("ui-llava", LlavaConfig)
 AutoModelForCausalLM.register(LlavaConfig, adapt_LlavaLlamaForCausalLM)
