@@ -132,6 +132,7 @@ class adapt_LlavaMetaForCausalLM(ABC):
     def prepare_inputs_labels_for_multimodal(
         self, input_ids, position_ids, attention_mask, past_key_values, labels, images,origin_image_widths,origin_image_heights
     ):
+        # input_ids is a list of 1D input ids
         vision_tower = self.get_vision_tower()
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
             if past_key_values is not None and vision_tower is not None and images is not None and input_ids.shape[1] == 1:
@@ -187,7 +188,7 @@ class adapt_LlavaMetaForCausalLM(ABC):
                 cur_labels_noim.append(cur_labels[image_token_indices[i]+1:image_token_indices[i+1]])
 
             split_sizes = [x.shape[0] for x in cur_labels_noim]
-            cur_input_embeds = self.get_model().embed_tokens(torch.cat(cur_input_ids_noim))
+            cur_input_embeds = self.get_model().embed_tokens(torch.cat(cur_input_ids_noim)) # llama3 outputs L x 4096
             cur_input_embeds_no_im = torch.split(cur_input_embeds, split_sizes, dim=0)
 
             cur_new_input_embeds = []

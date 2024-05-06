@@ -38,7 +38,7 @@ def build_vision_projector(config, delay_load=False, **kwargs):
     grid_size = int(math.sqrt(target_sequence_length))
     resampler = Resampler(
         grid_size=grid_size,
-        embed_dim = 5120,  # 保持与视觉模型输出的 embed_dim 一致
+        embed_dim = config.hidden_size,  # 保持与视觉模型输出的 embed_dim 一致. vicuna-13b是5120，vicuna-7b和llama3-8b都是4096
         num_heads = 1024 // 128,  # 保持与视觉模型输出的 num_heads 一致
         kv_dim=1024,  # 保持与视觉模型输出的 kv_dim 一致
     )

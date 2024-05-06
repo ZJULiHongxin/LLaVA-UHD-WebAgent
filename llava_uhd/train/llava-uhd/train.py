@@ -319,9 +319,7 @@ def preprocess_multimodal(
     for source in sources:
         for sentence in source:
             if DEFAULT_IMAGE_TOKEN in sentence['value']:
-                sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()
-                sentence['value'] = DEFAULT_IMAGE_TOKEN + '\n' + sentence['value']
-                sentence['value'] = sentence['value'].strip()
+                sentence['value'] = f"{DEFAULT_IMAGE_TOKEN}\n{sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '').strip()}"
                 if "mmtag" in conversation_lib.default_conversation.version:
                     sentence['value'] = sentence['value'].replace(DEFAULT_IMAGE_TOKEN, '<Image>' + DEFAULT_IMAGE_TOKEN + '</Image>')
             replace_token = DEFAULT_IMAGE_TOKEN
@@ -396,6 +394,98 @@ def preprocess_llama_2(
                 instruction_len = len(tokenizer(parts[0]).input_ids) - 2
 
             target[cur_len : cur_len + instruction_len] = IGNORE_INDEX
+
+            cur_len += round_len
+        target[cur_len:] = IGNORE_INDEX
+
+        if cur_len < tokenizer.model_max_length:
+            if cur_len != total_len:
+                target[:] = IGNORE_INDEX
+                print(
+                    f"WARNING: tokenization mismatch: {cur_len} vs. {total_len}."
+                    f" (ignored)"
+                )
+
+    return dict(
+        input_ids=input_ids,
+        labels=targets,
+    )
+
+
+def preprocess_llama_3(
+    sources,
+    tokenizer: transformers.PreTrainedTokenizer,
+    has_image: bool = False
+) -> Dict:
+    conv = conversation_lib.default_conversation.copy()
+    roles = {"human": conv.roles[0], "gpt": conv.roles[1]}
+
+    # Apply prompt templates
+    conversations = []
+    for i, source in enumerate(sources):
+        if roles[source[0]["from"]] != conv.roles[0]:
+            # Skip the first one if it is not from human
+            source = source[1:]
+
+        conv.messages = []
+        for j, sentence in enumerate(source):
+            role = roles[sentence["from"]]
+            assert role == conv.roles[j % 2], f"{i}"
+            conv.append_message(role, sentence["value"])
+        conversations.append(conv.get_prompt())
+
+    # Tokenize conversations
+
+    if has_image:
+        input_ids = torch.stack([tokenizer_image_token(prompt, tokenizer, return_tensors='pt') for prompt in conversations], dim=0)
+    else:
+        input_ids = tokenizer(
+            conversations,
+            return_tensors="pt",
+            padding="longest",
+            max_length=tokenizer.model_max_length,
+            truncation=True,
+        ).input_ids
+
+    targets = input_ids.clone()
+
+    assert conv.sep_style == conversation_lib.SeparatorStyle.LLAMA_3
+
+    # Mask targets
+    # sep = "[/INST] "
+    for conversation, target in zip(conversations, targets):
+        total_len = int(target.ne(tokenizer.pad_token_id).sum())
+
+        parts = conversation.split(conv.sep)[:-1] # "<|eot_id|>" Discard the last ""
+        
+        if len(parts) % 2 == 0:
+            rounds = [[parts[i], parts[i+1]] for i in range(len(parts) // 2)]
+        else:
+            rounds = [[f"{parts[0]}{conv.sep}{parts[1]}", parts[2]]] # Sys. + User, Assistant
+            for i in range(3, len(parts), 2):
+                rounds.append([parts[i], parts[i+1]])
+
+        cur_len = 1
+        target[:cur_len] = IGNORE_INDEX
+        for i, round in enumerate(rounds):
+            # if rou == "":
+            #     break
+
+            if len(round) != 2:
+                assert "The number of messages in a turn is not 2!"
+                break
+
+            round[0] = f"{round[0]}{conv.sep}"
+            complete_round = f"{round[0]}{round[1]}"
+
+            if has_image:
+                round_len = len(tokenizer_image_token(complete_round, tokenizer))
+                instruction_len = len(tokenizer_image_token(round[0], tokenizer))
+            else:
+                round_len = len(tokenizer(complete_round).input_ids)
+                instruction_len = len(tokenizer(round[0]).input_ids)
+
+            target[cur_len : cur_len + instruction_len + 3] = IGNORE_INDEX # +3 means the starting words of the assistant's message ("<|start_header_id|>assistant<|end_header_id|>\n\n") is not to be supervised
 
             cur_len += round_len
         target[cur_len:] = IGNORE_INDEX
@@ -600,6 +690,8 @@ def preprocess(
         return preprocess_plain(sources, tokenizer)
     if conversation_lib.default_conversation.sep_style == conversation_lib.SeparatorStyle.LLAMA_2:
         return preprocess_llama_2(sources, tokenizer, has_image=has_image)
+    if conversation_lib.default_conversation.sep_style == conversation_lib.SeparatorStyle.LLAMA_3:
+        return preprocess_llama_3(sources, tokenizer, has_image=has_image)
     if conversation_lib.default_conversation.version.startswith("v1"):
         return preprocess_v1(sources, tokenizer, has_image=has_image)
     if conversation_lib.default_conversation.version == "mpt":
@@ -745,6 +837,19 @@ class DataCollatorForSupervisedDataset(object):
                                                  padding_value=IGNORE_INDEX)
         input_ids = input_ids[:, :self.tokenizer.model_max_length]
         labels = labels[:, :self.tokenizer.model_max_length]
+        
+        ### Print supervised substrings to debug
+        # print(self.tokenizer.decode(input_ids[2].where(input_ids[2] != -200, torch.tensor(0))))
+        
+        # attention_mask=input_ids.ne(self.tokenizer.pad_token_id)
+        # print(attention_mask[2])
+        # print(torch.argmin(attention_mask[2].int()))
+        
+        # print(labels[2])
+        # label_start = torch.argmax((labels[2] > 0).int()); label_end = torch.argmax((labels[2] == 128009).int())
+        # print(label_start, label_end)
+        
+        # print(self.tokenizer.decode(input_ids[2].where(input_ids[2] != -200, torch.tensor(0))[label_start: label_end+1]))
         batch = dict(
             input_ids=input_ids,
             labels=labels,
@@ -922,6 +1027,14 @@ def train():
         tokenizer.pad_token = tokenizer.unk_token
     else:
         tokenizer.pad_token = tokenizer.unk_token
+
+    if tokenizer.pad_token is None:
+        #tokenizer.add_special_tokens(dict(pad_token="[PAD]"))
+        
+        tokenizer.pad_token = tokenizer.eos_token
+        tokenizer.pad_token_id = tokenizer.eos_token_id
+        # Use EoS token as Pad token. Following https://github.com/AnswerDotAI/fsdp_qlora/blob/f7055c9bb67f8b8bd2c5071b46cfab33d87dd4a4/hf_train.py#L19
+        
     if model_args.version in conversation_lib.conv_templates:
         conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
     else:
