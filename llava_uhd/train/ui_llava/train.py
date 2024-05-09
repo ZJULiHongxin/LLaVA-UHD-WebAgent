@@ -14,15 +14,15 @@
 #    See the License for the specific language governing permissions and
 #    limitations under the License.
 
-import os
+import os, shutil
 import copy
 from dataclasses import dataclass, field
 import json
 import logging
 import pathlib
 from typing import Dict, Optional, Sequence, List
-
-import math
+from pprint import pprint
+import time
 
 from PIL import Image
 
@@ -42,16 +42,17 @@ from llava.mm_utils import tokenizer_image_token
 
 from PIL import Image
 
-from adapt_llava import adapt_LlavaLlamaForCausalLM
+from modeling_ui_llava import UILlavaLlamaForCausalLM
 
 from slice_logic import process_image
+from misc import clean_dict
 
 local_rank = None
 
 
 def rank0_print(*args):
     if local_rank == 0:
-        print(*args)
+        pprint(*args)
 
 
 @dataclass
@@ -411,7 +412,7 @@ def preprocess_llama_2(
         labels=targets,
     )
 
-
+# https://llama.meta.com/docs/model-cards-and-prompt-formats/meta-llama-3/
 def preprocess_llama_3(
     sources,
     tokenizer: transformers.PreTrainedTokenizer,
@@ -775,7 +776,7 @@ class LazySupervisedDataset(Dataset):
             #     print("path",os.path.join(image_folder, image_file))
             #     print("size","image size",image.size)
             
-            slices_and_image = process_image(image)
+            slices_and_image = process_image(image) # A list of image slice tensors plus the original image, all resized to 3 x 336 x 336
             # print( slices_and_image[0])            
             image_tuple = tuple(slices_and_image)
             # print(image_tuple)
@@ -921,6 +922,8 @@ def train():
     compute_dtype = (torch.float16 if training_args.fp16 else (torch.bfloat16 if training_args.bf16 else torch.float32))
 
     bnb_model_from_pretrained_args = {}
+    trainable_params_info = {}
+    
     if training_args.bits in [4, 8]:
         # print("MY_DEBUG_9________")
         from transformers import BitsAndBytesConfig
@@ -951,7 +954,7 @@ def train():
                 **bnb_model_from_pretrained_args
             )
         else:
-            model = adapt_LlavaLlamaForCausalLM.from_pretrained(
+            model = UILlavaLlamaForCausalLM.from_pretrained(
                 model_args.model_name_or_path,
                 cache_dir=training_args.cache_dir,
                 **bnb_model_from_pretrained_args
@@ -967,6 +970,12 @@ def train():
 
     if model_args.freeze_backbone:
         model.model.requires_grad_(False)
+    trainable_params_info["LLM_backbone"] = {
+        "name": model_args.model_name_or_path,
+        "trainable": not model_args.freeze_backbone,
+        "#params": sum(p.numel() for p in model.model.parameters()),
+        "#trainable_params": sum(p.numel() for p in model.model.parameters()if p.requires_grad)
+    }
 
     if training_args.bits in [4, 8]:
 
@@ -1052,6 +1061,13 @@ def train():
         vision_tower = model.get_vision_tower()
         vision_tower.to(dtype=torch.bfloat16 if training_args.bf16 else torch.float16, device=training_args.device)
 
+        trainable_params_info["vision_tower"] = {
+            "name": model_args.vision_tower,
+            "trainable": False,
+            "#params": sum(p.numel() for p in vision_tower.parameters()),
+            "#trainable_params": sum(p.numel() for p in vision_tower.parameters()if p.requires_grad)
+        }
+    
         data_args.image_processor = vision_tower.image_processor
         data_args.is_multimodal = True
 
@@ -1064,18 +1080,29 @@ def train():
         
         training_args.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter
         model.config.tune_mm_mlp_adapter = model_args.tune_mm_mlp_adapter 
+        
+        mm_projector = model.get_model().mm_projector
         if model_args.tune_mm_mlp_adapter:
             model.requires_grad_(False)
-            for p in model.get_model().mm_projector.parameters():
+            for p in mm_projector.parameters():
                 p.requires_grad = True
 
         model.config.freeze_mm_mlp_adapter = training_args.freeze_mm_mlp_adapter
         if training_args.freeze_mm_mlp_adapter:
-            for p in model.get_model().mm_projector.parameters():
+            mm_projector.trainbable = False
+
+            for p in mm_projector.parameters():
                 p.requires_grad = False
 
+        trainable_params_info["mm_projector"] = {
+            "name": "Resampler`",
+            "trainable": False,
+            "#params": sum(p.numel() for p in mm_projector.parameters()),
+            "#trainable_params": sum(p.numel() for p in mm_projector.parameters()if p.requires_grad)
+        }
+
         # print("MY_DEBUG_100_________")
-        print("freezeinginging")
+        rank0_print(trainable_params_info)
         # model.get_vision_tower().unfreeze_position_embedding()
 
         # print("MY_DEBUG_111_________")
@@ -1129,6 +1156,8 @@ def train():
     #-----------------------------------------------------#
     #  检查 checkpoints 路径是否有保存的检查点
     #-----------------------------------------------------#
+    start = time.time()
+    
     if list(pathlib.Path(training_args.output_dir).glob("checkpoint-*")):
         trainer.train(resume_from_checkpoint=True)
     else:
@@ -1151,7 +1180,17 @@ def train():
     else:
         safe_save_model_for_hf_trainer(trainer=trainer,
                                     output_dir=training_args.output_dir)
+    
+    # Save the experiment configurations
+    exp_config = vars(model_args) | vars(data_args) | vars(training_args)
+    exp_config["trainable_params_info"] = trainable_params_info
+    exp_config["training_time"] = time.time() - start
+    
+    if local_rank == 0:
+        with open(os.path.join(training_args.output_dir, "exp_config.json"), "w") as f:
+            json.dump(clean_dict(exp_config), f, indent=2)
 
+        shutil.copy("/data0/jingran/workspace/hongxin_li/LLaVA-UHD-WebAgent/modeling_ui_llava_bak.py", os.path.join(training_args.output_dir, "modeling_ui_llava.py"))
 
 if __name__ == "__main__":
     train()

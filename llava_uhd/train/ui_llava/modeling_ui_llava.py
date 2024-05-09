@@ -16,10 +16,10 @@ from abc import ABC, abstractmethod
 
 #_____MY_DEBUG____belong to llava_arch.py
 
-class adapt_LlavaMetaModel:
+class UILlavaMetaModel:
 
     def __init__(self, config):
-        super(adapt_LlavaMetaModel, self).__init__(config)
+        super(UILlavaMetaModel, self).__init__(config)
 
         if hasattr(config, "mm_vision_tower"):
             self.vision_tower = adapt_build_vision_tower(config, delay_load=True)
@@ -74,7 +74,7 @@ class adapt_LlavaMetaModel:
             self.mm_projector.load_state_dict(get_w(mm_projector_weights, 'mm_projector'))
    
         
-class adapt_LlavaMetaForCausalLM(ABC):
+class UILlavaMetaForCausalLM(ABC):
     
 
     @abstractmethod
@@ -315,18 +315,18 @@ class adapt_LlavaMetaForCausalLM(ABC):
 class LlavaConfig(LlamaConfig):
     model_type = "ui-llava"
 
-class adapt_LlavaLlamaModel(adapt_LlavaMetaModel, LlamaModel):
+class UILlavaLlamaModel(UILlavaMetaModel, LlamaModel):
     config_class = LlavaConfig
 
     def __init__(self, config: LlamaConfig):
-        super(adapt_LlavaLlamaModel, self).__init__(config)
+        super(UILlavaLlamaModel, self).__init__(config)
 
-class adapt_LlavaLlamaForCausalLM(LlamaForCausalLM, adapt_LlavaMetaForCausalLM):
+class UILlavaLlamaForCausalLM(LlamaForCausalLM, UILlavaMetaForCausalLM):
     config_class = LlavaConfig
 
     def __init__(self, config):
         super(LlamaForCausalLM, self).__init__(config)
-        self.model = adapt_LlavaLlamaModel(config)
+        self.model = UILlavaLlamaModel(config)
         self.pretraining_tp = config.pretraining_tp
         self.vocab_size = config.vocab_size
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
@@ -396,4 +396,4 @@ class adapt_LlavaLlamaForCausalLM(LlamaForCausalLM, adapt_LlavaMetaForCausalLM):
         return _inputs
 
 AutoConfig.register("ui-llava", LlavaConfig)
-AutoModelForCausalLM.register(LlavaConfig, adapt_LlavaLlamaForCausalLM)
+AutoModelForCausalLM.register(LlavaConfig, UILlavaLlamaForCausalLM)

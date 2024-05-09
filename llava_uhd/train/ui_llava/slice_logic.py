@@ -186,9 +186,11 @@ def process_image(image):
         images = []
         resized_patch_widths = []
         resized_patch_heights = []
+        
+        # 将原图加到列表末尾
         slices.append(image)
+        
         for image in slices:
-
             image = ToTensor()(image)
     
             image = torch.nn.functional.interpolate(

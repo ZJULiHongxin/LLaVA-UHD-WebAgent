@@ -1,6 +1,6 @@
 #!/bin/bash
-
-deepspeed --num_nodes=1 --num_gpus=8 llava_uhd/train/llava-uhd/train_mem.py \
+# If tune_mm_mlp_adapter is True, all parameters except those of the mm_projector will be frozen (see llava_uhd/train/llava-uhd/train.py #1067)
+deepspeed --num_nodes=1 --num_gpus=8 llava_uhd/train/ui_llava/train_mem.py \
     --deepspeed ./scripts/zero2.json \
     --model_name_or_path $llama3_8b \
     --version llama_3 \

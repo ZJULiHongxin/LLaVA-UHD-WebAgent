@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import re
 from resampler import Resampler
 import math
 

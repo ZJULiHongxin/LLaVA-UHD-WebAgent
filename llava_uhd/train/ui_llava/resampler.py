@@ -118,7 +118,7 @@ class Resampler(nn.Module):
         self.num_queries = grid_size ** 2
         self.embed_dim = embed_dim
         self.num_heads = num_heads
-
+        self.trainbable = True
         self.pos_embed = nn.Parameter(
             torch.from_numpy(get_2d_sincos_pos_embed(embed_dim, grid_size)).float()
         ).requires_grad_(False)
@@ -139,6 +139,11 @@ class Resampler(nn.Module):
         self.proj = nn.Parameter((embed_dim ** -0.5) * torch.randn(embed_dim, embed_dim))
 
         self.apply(self._init_weights)
+
+    def train(self, trainable=True):
+        self.trainbable = trainable
+        for p in self.parameters(): p.requires_grad = trainable
+        self.pos_embed.requires_grad = False
 
     def _init_weights(self, m):
         if isinstance(m, nn.Linear):
