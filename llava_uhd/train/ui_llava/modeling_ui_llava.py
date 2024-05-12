@@ -88,6 +88,8 @@ class UILlavaMetaForCausalLM(ABC):
         
         # print("len(images)",len(images))
         # print("images[0]",images[0].shape)
+        
+        # Adapt_clip对每个slice单独抽取特征，返回一个列表
         image_features = self.get_model().get_vision_tower()(images,origin_image_widths,origin_image_heights)
 
         # for i in range(8):
@@ -99,33 +101,16 @@ class UILlavaMetaForCausalLM(ABC):
         # len(image_features) 8
         # image_features[0].shape torch.Size([32, 576, 1024])
 
+        # 经过projector映射到文本空间
         if isinstance(image_features,list):
-            # print("len(image_features)",len(image_features))
             image_features_list = []
             for image_feature in image_features:
-                # print(image_feature)
-                # 将维度为5120的向量是否全为0的布尔掩码
-                # mask = torch.all(image_feature == 0, dim=2)
-
-                # # 打印维度为5120的向量为0的位置
-                # indices = torch.nonzero(mask)
-
-                # print("维度为5120的向量为0的位置：")
-                # print(indices)
-
                 image_features_list.append(self.get_model().mm_projector(image_feature))
-            # print("image_features_list[0].shape",image_features_list[0].shape)
             image_features = torch.concat( tuple(image_features_list) ,dim = 0)
-            # print("image_features.shape",image_features.shape)
-            # image_features.shape torch.Size([32, 64, 5120])
 
 
         else:
-            # print("image_features.shape",image_features.shape)
             image_features = self.get_model().mm_projector(image_features)
-
-        # print("image_features.shape",image_features.shape)
-        # image_features.shape torch.Size([256, 64, 5120])
 
         return image_features
 
@@ -133,6 +118,7 @@ class UILlavaMetaForCausalLM(ABC):
         self, input_ids, position_ids, attention_mask, past_key_values, labels, images,origin_image_widths,origin_image_heights
     ):
         # input_ids is a list of 1D input ids
+        # images: bs x (3*(#slices + 1)) x 336 x 336
         vision_tower = self.get_vision_tower()
         if vision_tower is None or images is None or input_ids.shape[1] == 1:
             if past_key_values is not None and vision_tower is not None and images is not None and input_ids.shape[1] == 1:
@@ -145,7 +131,8 @@ class UILlavaMetaForCausalLM(ABC):
                 position_ids = torch.sum(attention_mask, dim=1).unsqueeze(-1) - 1
             return input_ids, position_ids, attention_mask, past_key_values, None, labels
 
-        image_features = self.encode_images(images,origin_image_widths,origin_image_heights).to(self.device)
+        # image_features里一张图像的每个slice特征是错开的，每隔bs取特征，才能得到一张图像所有slices的特征
+        image_features = self.encode_images(images,origin_image_widths,origin_image_heights).to(self.device) # (bs*(#slices + 1)) x 64 x 4096
         # print("image_features.shape",image_features.shape)
         # TODO: image start / end is not implemented here to support pretraining.
         if getattr(self.config, 'tune_mm_mlp_adapter', False) and getattr(self.config, 'mm_use_im_start_end', False):
@@ -175,8 +162,10 @@ class UILlavaMetaForCausalLM(ABC):
         new_labels = []
         cur_image_idx = 0
         
-        for batch_idx, cur_input_ids in enumerate(input_ids):
-            num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum()
+        batch_size = len(origin_image_widths)
+
+        for batch_idx, cur_input_ids in enumerate(input_ids): # For each sample in the batch
+            num_images = (cur_input_ids == IMAGE_TOKEN_INDEX).sum() # The number of images in a prompt
 
             image_token_indices = [-1] + torch.where(cur_input_ids == IMAGE_TOKEN_INDEX)[0].tolist() + [cur_input_ids.shape[0]]
             cur_input_ids_noim = []
@@ -189,17 +178,19 @@ class UILlavaMetaForCausalLM(ABC):
 
             split_sizes = [x.shape[0] for x in cur_labels_noim]
             cur_input_embeds = self.get_model().embed_tokens(torch.cat(cur_input_ids_noim)) # llama3 outputs L x 4096
-            cur_input_embeds_no_im = torch.split(cur_input_embeds, split_sizes, dim=0)
+            cur_input_embeds_no_im = torch.split(cur_input_embeds, split_sizes, dim=0) # A tupe. The text features without images. One split is the text features before the iamge token and the other after.
 
             cur_new_input_embeds = []
             cur_new_labels = []
 
+            
             for i in range(num_images + 1):
                 cur_new_input_embeds.append(cur_input_embeds_no_im[i])
                 cur_new_labels.append(cur_labels_noim[i])
 
                 if i < num_images:
-                    for j in range(8):
+                    for j in range(image_features.shape[0] // batch_size):
+                        # image_features: (batch_size*(#slices + 1)) x 64 x 4096
                         cur_image_features = image_features[cur_image_idx+j*4]
                         cur_new_input_embeds.append(cur_image_features)
                         cur_new_labels.append(torch.full((cur_image_features.shape[0],), IGNORE_INDEX, device=cur_labels.device, dtype=cur_labels.dtype))

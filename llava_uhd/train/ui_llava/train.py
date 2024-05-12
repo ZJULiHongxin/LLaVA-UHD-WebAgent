@@ -873,6 +873,8 @@ class DataCollatorForSupervisedDataset(object):
         if 'image' in instances[0]:
             images = [instance['image'] for instance in instances]
             # print("____MY_DEBUG_2____",images)
+            
+            # 检查该batch里所有的样本的第一个维度（3*(#slices + 1)) 是否相等
             if all(x is not None and x.shape == images[0].shape for x in images):
                 batch['images'] = torch.stack(images)
             else:
