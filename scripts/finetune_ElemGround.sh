@@ -1,10 +1,11 @@
 #!/bin/bash
+CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7
 
-deepspeed --num_nodes=1 --num_gpus=4 llava_uhd/train/ui_llava/train_mem.py \
+deepspeed --master_port 14218 --num_nodes=1 --num_gpus=8 llava_uhd/train/ui_llava/train_mem.py \
     --deepspeed ./scripts/zero3.json \
     --model_name_or_path /home/jingran_su/.cache/huggingface/hub/models--meta-llama--Meta-Llama-3-8B-Instruct/snapshots/e5e23bbe8e749ef0efcf16cad411a7d23bd23298 \
     --version llama_3 \
-    --data_path /data0/jingran/workspace/UI_training_data/Ours-Pretrain/mixed_sample.json \
+    --data_path /data0/jingran/workspace/UI_training_data/Ours-Pretrain/mixed_AG_point_tag.json \
     --image_folder /data0/jingran/workspace/UI_training_data/Ours-Pretrain/images \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --pretrain_mm_mlp_adapter ./checkpoints/llava-v1.5-llama3-8b_pretrain/mm_projector.bin \
@@ -15,14 +16,14 @@ deepspeed --num_nodes=1 --num_gpus=4 llava_uhd/train/ui_llava/train_mem.py \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llava-v1.5-llama3-8b_ft_elemGrounding_v1 \
+    --output_dir ./checkpoints/llava-llama3-8b_mixed_AG_tag \
     --num_train_epochs 1 \
-    --per_device_train_batch_size 16 \
+    --per_device_train_batch_size 12 \
     --per_device_eval_batch_size 4 \
     --gradient_accumulation_steps 1 \
     --evaluation_strategy "no" \
     --save_strategy "steps" \
-    --save_steps 2000 \
+    --save_steps 20000 \
     --save_total_limit 1 \
     --learning_rate 2e-5 \
     --weight_decay 0. \
@@ -34,4 +35,5 @@ deepspeed --num_nodes=1 --num_gpus=4 llava_uhd/train/ui_llava/train_mem.py \
     --gradient_checkpointing True \
     --dataloader_num_workers 4 \
     --lazy_preprocess True \
-    --report_to none
+    --report_to wandb \
+    # --add_point_token True # Add <point> </point> to special tokens

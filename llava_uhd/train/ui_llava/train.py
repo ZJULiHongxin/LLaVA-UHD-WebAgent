@@ -32,11 +32,11 @@ import torch
 
 import transformers
 
-from llava.constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from constants import IGNORE_INDEX, IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN, POINT_MARKER_START, POINT_MARKER_END
 from torch.utils.data import Dataset
 from llava.train.llava_trainer import LLaVATrainer
 
-from llava import conversation as conversation_lib
+import conversation as conversation_lib
 from llava.model import *
 from llava.mm_utils import tokenizer_image_token
 
@@ -68,6 +68,10 @@ class ModelArguments:
     mm_use_im_start_end: bool = field(default=False)
     mm_use_im_patch_token: bool = field(default=True)
     mm_vision_select_feature: Optional[str] = field(default="patch")
+    
+    # Our custom args
+    add_point_token: Optional[bool] = field(default=False)
+    context_enhanced: Optional[str] = field(default="")
 
 
 @dataclass
@@ -1043,7 +1047,11 @@ def train():
         tokenizer.pad_token = tokenizer.eos_token
         tokenizer.pad_token_id = tokenizer.eos_token_id
         # Use EoS token as Pad token. Following https://github.com/AnswerDotAI/fsdp_qlora/blob/f7055c9bb67f8b8bd2c5071b46cfab33d87dd4a4/hf_train.py#L19
-        
+    
+    # Add <point></point> to special tokens if required
+    if model_args.add_point_token:
+        tokenizer.add_special_tokens({"additional_special_tokens": [POINT_MARKER_START, POINT_MARKER_END]})
+
     if model_args.version in conversation_lib.conv_templates:
         conversation_lib.default_conversation = conversation_lib.conv_templates[model_args.version]
     else:
@@ -1189,6 +1197,16 @@ def train():
     if local_rank == 0:
         with open(os.path.join(training_args.output_dir, "exp_config.json"), "w") as f:
             json.dump(clean_dict(exp_config), f, indent=2)
+
+        # add model config and class mapping; otherwise, the model cannot be recognized
+        with open(os.path.join(training_args.output_dir, "config.json"), "r") as f:
+            model_config = json.load(f)
+            model_config["auto_map"] = {
+                "AutoConfig": "modeling_ui_llava.LlavaConfig", #  "<your-repo-name>--<config-name>"
+                "AutoModelForCausalLM": "modeling_ui_llava.UILlavaLlamaForCausalLM" # "<your-repo-name>--<config-name>",    
+            }
+        with open(os.path.join(training_args.output_dir, "config.json"), "w") as f:
+            json.dump(model_config, f, indent=2)
 
         shutil.copy("/data0/jingran/workspace/hongxin_li/LLaVA-UHD-WebAgent/modeling_ui_llava_bak.py", os.path.join(training_args.output_dir, "modeling_ui_llava.py"))
 

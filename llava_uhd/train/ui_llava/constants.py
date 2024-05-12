@@ -11,3 +11,7 @@ DEFAULT_IMAGE_PATCH_TOKEN = "<im_patch>"
 DEFAULT_IM_START_TOKEN = "<im_start>"
 DEFAULT_IM_END_TOKEN = "<im_end>"
 IMAGE_PLACEHOLDER = "<image-placeholder>"
+
+# Custom
+POINT_MARKER_START = "<point>"
+POINT_MARKER_END = "</point>"

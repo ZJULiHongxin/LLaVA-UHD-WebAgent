@@ -12,13 +12,15 @@
             "name": "Python Debugger: Current File",
             "type": "debugpy",
             "request": "launch",
-            "program": "/home/jingran_su/miniconda3/envs/llava/bin/deepspeed", //"${file}",
+            "program": "/home/jingran_su/miniconda3/envs/llava/bin/deepspeed",
+            //"program": "${file}",
             "console": "integratedTerminal",
-            "justMyCode": false,
+            "justMyCode": true,
             // FT
             "args": [
                 "--num_nodes=1",
-                "--num_gpus=8",
+                "--num_gpus=4",
+                "--master_port=60000",
                 "llava_uhd/train/ui_llava/train_mem.py",
                 "--deepspeed", "./scripts/zero3.json",
                 "--model_name_or_path",
@@ -26,7 +28,7 @@
                 // "lmsys/vicuna-13b-v1.5",
                 "--version", "llama_3",
                 //"v1",
-                "--data_path", "/data0/jingran/workspace/UI_training_data/Ours-Pretrain/mixed_sample.json",
+                "--data_path", "/data0/jingran/workspace/UI_training_data/Ours-Pretrain/motif_AG_point_tag.json",
                 // "/data0/jingran/workspace/UI_training_data/LLaVA-Pretrain/blip_laion_cc_sbu_558k.json",
                 "--image_folder", "/data0/jingran/workspace/UI_training_data/Ours-Pretrain/images",
                 //"/data0/jingran/workspace/UI_training_data/LLaVA-Pretrain/images",
@@ -59,6 +61,7 @@
                 "--dataloader_num_workers", "4",
                 "--lazy_preprocess", "True",
                 "--report_to", "none",
+                "--context_enhanced", "True"
             ],
 
             // "args": [

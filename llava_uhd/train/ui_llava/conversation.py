@@ -4,7 +4,7 @@ from typing import List, Tuple
 import base64
 from io import BytesIO
 from PIL import Image
-
+from constants import DEFAULT_IMAGE_TOKEN
 
 class SeparatorStyle(Enum):
     """Different separator style."""
@@ -13,6 +13,7 @@ class SeparatorStyle(Enum):
     MPT = auto()
     PLAIN = auto()
     LLAMA_2 = auto()
+    LLAMA_3 = auto()
 
 
 @dataclasses.dataclass
@@ -41,6 +42,13 @@ class Conversation:
                 messages.insert(1, (self.roles[1], "Received."))
             else:
                 messages[0] = (init_role, "<image>\n" + init_msg)
+
+        # Add <image> token if inexisting
+        user_message_id = 1 if len(messages) % 2 == 1 else 0
+        while user_message_id < len(messages):
+            if DEFAULT_IMAGE_TOKEN not in messages[user_message_id][1]:
+                messages[user_message_id][1] = f"{DEFAULT_IMAGE_TOKEN}\n{messages[user_message_id][1]}"
+            user_message_id += 2
 
         if self.sep_style == SeparatorStyle.SINGLE:
             ret = self.system + self.sep
@@ -91,6 +99,27 @@ class Conversation:
                 else:
                     ret += ""
             ret = ret.lstrip(self.sep)
+        elif self.sep_style == SeparatorStyle.LLAMA_3:
+            wrap_sys = lambda msg: f"<|start_header_id|>system<|end_header_id|>\n\n{msg}<|eot_id|>" if len(msg) > 0 else msg
+            wrap_user = lambda msg: f"<|start_header_id|>user<|end_header_id|>\n\n{msg}<|eot_id|>"
+            wrap_assistant = lambda msg: f"<|start_header_id|>assistant<|end_header_id|>\n\n{msg}<|eot_id|>"
+            ret = wrap_sys(self.system)
+
+            for i, (role, message) in enumerate(messages):
+                if i == 0:
+                    assert message, "first message should not be none"
+                    assert role == self.roles[0], "first message should come from user"
+                if message:
+                    if type(message) is tuple:
+                        message, _, _ = message
+
+                    if i % 2 == 1:
+                        message = wrap_assistant(message)
+                        ret += message
+                    else:
+                        ret += wrap_user(message)
+                else:
+                    ret += ""
         elif self.sep_style == SeparatorStyle.PLAIN:
             seps = [self.sep, self.sep2]
             ret = self.system
@@ -369,6 +398,24 @@ Answer the questions.""",
     sep="<|im_end|>",
 )
 
+conv_llama3_instruct = Conversation(
+    system="""A chat between a curious human and an artificial intelligence assistant.
+The assistant gives helpful, detailed, and polite answers to the human's questions.
+The coordinates of a bounding box are expressed as <bbox>[x1,y1,x2,y2]</bbox>, where x1, y1, x2, and y2 represent top-left x, top-left y, bottom-right x, bottom-right y, respectively. These coordinate values are all normalized in the range [0, 1000).""",
+    roles=("USER",
+           "ASSISTANT"),
+    version="llama3",
+    messages=(),
+    offset=0,
+    sep_style=SeparatorStyle.LLAMA_3,
+    sep="<|eot_id|>",
+    
+    # SUFFIX='<|eot_id|>',
+    # SUFFIX_AS_EOS=True,
+    # STOP_WORDS=['<|eot_id|>']
+)
+
+
 default_conversation = conv_vicuna_v1
 conv_templates = {
     "default": conv_vicuna_v0,
@@ -376,6 +423,7 @@ conv_templates = {
     "v1": conv_vicuna_v1,
     "vicuna_v1": conv_vicuna_v1,
     "llama_2": conv_llama_2,
+    "llama_3": conv_llama3_instruct,
     "mistral_instruct": conv_mistral_instruct,
     "chatml_direct": conv_chatml_direct,
     "mistral_direct": conv_chatml_direct,
